@@ -25,7 +25,7 @@ final class AppModel: ObservableObject {
         config = c
         agent = Agent(config: c)
         agent.onEvent = { [weak self] e in Task { @MainActor in self?.append(e) } }
-        agent.onPeerStatus = { [weak self] s in Task { @MainActor in self?.peer = s } }
+        agent.onPeerStatus = { [weak self] s in Task { @MainActor in self?.setPeer(s) } }
         agent.start()
         refreshChecks()
     }
@@ -107,6 +107,13 @@ final class AppModel: ObservableObject {
         agent.checkPeer()
     }
 
+    /// 每 30 秒的检测结果大多只是延迟毫秒数不同。只有在线/离线、锁屏状态等真正变化时才更新，
+    /// 避免界面无谓地重绘。
+    private func setPeer(_ s: PeerStatus) {
+        if case .online(_, let was) = peer, case .online(_, let now) = s, was == now { return }
+        if s != peer { peer = s }
+    }
+
     func lockBoth() { agent.lockBoth() }
 
     func sendToPeer(_ cmd: String) {
@@ -140,9 +147,9 @@ final class AppModel: ObservableObject {
         switch peer {
         case .unconfigured: return "还没有配对另一台 Mac"
         case .checking: return "正在连接 \(config.peer ?? "")…"
-        case .online(let ms, let locked):
-            let state = locked == true ? "已锁屏" : locked == false ? "已解锁" : ""
-            return "\(config.peer ?? "") 在线 · \(state) · \(Agent.fmt(ms)) ms"
+        case .online(_, let locked):  // 菜单里不显示延迟：它只在状态变化时更新，数值会过时
+            let state = locked == true ? " · 已锁屏" : locked == false ? " · 已解锁" : ""
+            return "\(config.peer ?? "") 在线\(state)"
         case .offline(let why): return "\(config.peer ?? "") 离线：\(why)"
         }
     }

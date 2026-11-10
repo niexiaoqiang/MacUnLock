@@ -35,17 +35,46 @@ struct MacUnLockApp: App {
             Image(systemName: model.statusSymbol)
         }
         .menuBarExtraStyle(.menu)
+    }
+}
 
-        Window("MacUnLock 设置", id: "settings") {
-            SettingsView().environmentObject(model)
+/// 设置窗口：自己管理 NSWindow，关闭时释放里面的 SwiftUI 视图。
+///
+/// 不用 SwiftUI 的 Window 场景，是因为它关闭时只隐藏窗口：SettingsView 仍然活着，
+/// 每次对方状态更新都会在后台重新布局，而 SwiftUI 每次布局都会留下一组释放不掉的观察记录，
+/// 内存一直上涨（macOS 27 上实测每天约 35 MB）。
+@MainActor
+final class SettingsWindow: NSObject, NSWindowDelegate {
+    static let shared = SettingsWindow()
+    private var window: NSWindow?
+
+    func show(model: AppModel) {
+        if window == nil {
+            let host = NSHostingController(rootView: SettingsView().environmentObject(model))
+            let w = NSWindow(contentViewController: host)
+            w.title = "MacUnLock 设置"
+            w.styleMask = [.titled, .closable, .miniaturizable]
+            w.isReleasedWhenClosed = false
+            w.delegate = self
+            w.center()
+            w.setFrameAutosaveName("MacUnLockSettings")
+            window = w
         }
-        .windowResizability(.contentSize)
+        NSApp.activate(ignoringOtherApps: true)
+        window?.makeKeyAndOrderFront(nil)
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        guard let w = notification.object as? NSWindow, w === window else { return }
+        window = nil
+        w.delegate = nil
+        // 等关闭流程走完再拆掉视图，之后它不会再收到任何状态更新
+        DispatchQueue.main.async { w.contentViewController = nil }
     }
 }
 
 struct MenuView: View {
     @EnvironmentObject var model: AppModel
-    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         Text(model.peerText)
@@ -76,8 +105,7 @@ struct MenuView: View {
         Button("设置…") {
             model.refreshChecks()
             model.checkPeer()
-            openWindow(id: "settings")
-            NSApp.activate(ignoringOtherApps: true)
+            SettingsWindow.shared.show(model: model)
         }
         .keyboardShortcut(",")
         Button("退出 MacUnLock") { NSApp.terminate(nil) }
